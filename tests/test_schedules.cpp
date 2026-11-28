@@ -5729,3 +5729,40 @@ TEST_F(Schedules, VentilationPathsFollowTheUndercuts) {
   EXPECT_NE(rowOf("居間").note.find("令第20条の3"), std::string::npos);
   (void)wash;
 }
+
+// docs/342: a column standing in a window (the frame made before the opening) is found by the plan stage; one beside
+// the window is not; a brace across a window's void is found by points along it.
+TEST_F(Schedules, MembersThroughOpeningsAreFound) {
+  const auto rowOf = [&]() {
+    for (const auto& c : sbr::doc::permitPlanChecks(modeler.document()))
+      if (c.item == "開口を通る柱・間柱・筋かい") return c;
+    return sbr::doc::PermitCheck{};
+  };
+  EXPECT_TRUE(rowOf().item.empty());  // no members: no row
+  // The south wall's first window: its middle along the wall.
+  sbr::doc::OpeningRow window;
+  for (const auto& r : sbr::doc::openingSchedule(modeler.document()).rows)
+    if (r.host == south && r.index == 1) window = r;
+  ASSERT_GT(window.width, 0);
+  const double x = window.center.X(), y = 0.0;
+  // A column beside the window (past its edge): not through it.
+  ok("create_member", {{"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", 105}}},
+                       {"start", {x + window.width / 2 + 200, y, 0}}, {"end", {x + window.width / 2 + 200, y, 2800}}, {"role", "column"},
+                       {"material_class", "timber"}});
+  EXPECT_EQ(rowOf().state, "入力済み");
+  // One in the window's middle: through it.
+  const std::string post = ok("create_member", {{"section", {{"kind", "rectangle"}, {"width", 105}, {"depth", 105}}},
+                                                {"start", {x, y, 0}}, {"end", {x, y, 2800}}, {"role", "column"},
+                                                {"material_class", "timber"}})["id"];
+  auto r = rowOf();
+  EXPECT_EQ(r.state, "要確認");
+  ASSERT_EQ(r.targets.size(), 1u);
+  EXPECT_EQ(r.targets[0], post);
+  ok("delete", {{"ids", {post}}});
+  EXPECT_EQ(rowOf().state, "入力済み");
+  // A brace across the window's height and width.
+  ok("create_member", {{"section", {{"kind", "rectangle"}, {"width", 45}, {"depth", 90}}},
+                       {"start", {x - window.width / 2, y, 100}}, {"end", {x + window.width / 2, y, 2700}}, {"role", "brace"},
+                       {"material_class", "timber"}});
+  EXPECT_EQ(rowOf().state, "要確認");
+}

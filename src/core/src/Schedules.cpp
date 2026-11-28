@@ -945,6 +945,79 @@ std::vector<PermitCheck> permitPlanChecks(const Document& document) {
   } else {
     out.push_back({"開口", "入力済み", "開口 " + std::to_string(openings.size()) + " 件。どれも建具が決まっています。", {}});
   }
+  // docs/342: columns, studs and braces that run through a wall's opening (a door or window with a post in it): the
+  // frame made before the openings, or an opening moved after, leaves them there.
+  {
+    std::vector<ObjectId> through;
+    std::set<std::string> places;
+    int members = 0;
+    for (const Object& o : document.objects()) {
+      const std::string kind = attribute(o, "kind");
+      const bool brace = kind == "brace";
+      if (kind != "column" && kind != "through_column" && kind != "stud" && !brace) continue;
+      if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
+      ++members;
+      const Bnd_Box box = document.worldBounds(o);
+      if (box.IsVoid()) continue;
+      double x0, y0, z0, x1, y1, z1;
+      box.Get(x0, y0, z0, x1, y1, z1);
+      // A brace by points along it (its box spans the bay); a post by its box.
+      std::vector<gp_Pnt> samples;
+      if (brace) {
+        std::optional<gp_Pnt> low, high;
+        for (TopExp_Explorer v(document.worldShape(o), TopAbs_VERTEX); v.More(); v.Next()) {
+          const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+          if (!low || p.Z() < low->Z()) low = p;
+          if (!high || p.Z() > high->Z()) high = p;
+        }
+        if (!low || !high) continue;
+        for (int k = 1; k < 20; ++k) samples.push_back(low->Translated(gp_Vec(*low, *high) * (k / 20.0)));
+      }
+      for (const OpeningRow& r : openings) {
+        if (std::abs(r.normal.Z()) > 1e-6 || r.width <= 0 || r.height <= 0) continue;
+        const gp_Dir along = gp::DZ().Crossed(r.normal);
+        const double top = r.bottom + r.height;
+        // The opening's void: its width along the wall, through the wall (from its face, depth into it), its height.
+        const auto inVoid = [&](const gp_Pnt& p, double halfAlong) {
+          const gp_Vec d(r.center, gp_Pnt(p.X(), p.Y(), r.center.Z()));
+          const double s = d.Dot(gp_Vec(along)), t = d.Dot(gp_Vec(r.normal));
+          return std::abs(s) < r.width / 2 + halfAlong - 2.0 && t > -r.depth - 50.0 && t < 50.0;
+        };
+        bool hit = false;
+        if (brace) {
+          for (const gp_Pnt& p : samples)
+            if (p.Z() > r.bottom + 2.0 && p.Z() < top - 2.0 && inVoid(p, 0.0)) hit = true;
+        } else {
+          const double halfAlong = (std::abs(along.X()) * (x1 - x0) + std::abs(along.Y()) * (y1 - y0)) / 2;
+          hit = std::min(z1, top) - std::max(z0, r.bottom) > 2.0 && inVoid(gp_Pnt((x0 + x1) / 2, (y0 + y1) / 2, 0), halfAlong);
+        }
+        if (!hit) continue;
+        through.push_back(o.id);
+        places.insert(r.hostName + " の " + (r.mark.empty() ? "開口" + std::to_string(r.index) : r.mark));
+        break;
+      }
+    }
+    if (members > 0) {
+      if (through.empty()) {
+        out.push_back({"開口を通る柱・間柱・筋かい", "入力済み", "壁の開口（窓・戸）の中を通る柱・間柱・筋かいはありません。", {}});
+      } else {
+        std::string where;
+        int n = 0;
+        for (const std::string& p : places) {
+          if (n++ == 4) {
+            where += "　ほか";
+            break;
+          }
+          where += (where.empty() ? "" : "、") + p;
+        }
+        out.push_back({"開口を通る柱・間柱・筋かい", "要確認",
+                       "壁の開口の中を通る柱・間柱・筋かい " + std::to_string(through.size()) + " 本（" + where +
+                           "）。架構を開口より先に作った時や、開口を後から動かした時に残ります。\n"
+                           "開口のある壁を opening_hosts に入れて架構を作り直す（間柱は開口で切られ、まぐさ・窓台が入る）か、柱の位置を見直します。",
+                       through, true});
+      }
+    }
+  }
   // docs/334: the devices the plan is to show where they are (規則第1条の3 表1 の平面図).
   {
     int smoke = 0, heat = 0, supply = 0, exhaust = 0, cooking = 0;
