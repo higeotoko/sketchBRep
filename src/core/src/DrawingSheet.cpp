@@ -182,7 +182,8 @@ bool findNearbyPosition(Item& label, double scale, int maxSteps, IsClear isClear
   return false;
 }
 
-void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& tags, double scale) {
+void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& tags, double scale,
+                   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>>& blanks) {
   for (const auto& tag : tags) {
     Item& slot = items[tag.item];
     Item label = std::exchange(slot, Item{});
@@ -199,7 +200,26 @@ void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& t
       // kept where it was when that does not fit either.
       Item smaller = label;
       smaller.height = std::min(label.height, 2.5);
-      if (smaller.height < label.height && (fits(smaller) || findNearbyPosition(smaller, scale, 16, fits))) label = smaller;
+      if (smaller.height < label.height && (fits(smaller) || findNearbyPosition(smaller, scale, 16, fits))) {
+        label = smaller;
+      } else {
+        // Last, over the dashed lines only (the side parts' boxes, the walls left out of the calculation): placed
+        // clear of every other line, the dashed ones under it stopping at its box, as if it were written on white.
+        std::vector<Item> solid;
+        for (const Item& i : notGrid)
+          if (i.pen != Pen::Hidden) solid.push_back(i);
+        const auto overDashes = [&](const Item& candidate) {
+          return textFitsInside(candidate, tag.outline, scale, kLabelGap) && textIsClear(candidate, solid, scale, kLabelGap);
+        };
+        Item over = smaller;
+        if (overDashes(over) || findNearbyPosition(over, scale, 16, overDashes)) {
+          label = over;
+          const double w = textWidth(label.text, label.height) * scale, h = label.height * scale;
+          const gp_Pnt2d c = label.points.front();
+          blanks.push_back({gp_Pnt2d(c.X() - w / 2 - 0.5 * scale, c.Y() - h / 2 - 0.5 * scale),
+                            gp_Pnt2d(c.X() + w / 2 + 0.5 * scale, c.Y() + h / 2 + 0.5 * scale)});
+        }
+      }
     }
     slot = std::move(label);
   }
@@ -560,7 +580,8 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     }
     if (axes.size() >= 3 && axes.back().first - axes.front().first > 1e-6) put(axes.front().first, axes.back().first, far);
   }
-  placeRoomTags(items, view.roomTags, s);
+  std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> roomBlanks;  // docs/356
+  placeRoomTags(items, view.roomTags, s, roomBlanks);
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
   // looks, the label and (under it) the sheet it is on.
   for (const View::CutLine& c : view.cuts) {
@@ -657,6 +678,7 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   // before accepting a crowded position; never move the model itself.
   std::vector<Box> labels;
   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> blanks = view.blanks;
+  blanks.insert(blanks.end(), roomBlanks.begin(), roomBlanks.end());
   bool crowded = false;
   for (const auto& mark : view.members) {
     const double height = 2.5, width = textWidth(mark.text, height) * s;
