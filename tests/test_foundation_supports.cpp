@@ -152,3 +152,18 @@ TEST_F(FoundationSupports, ShortFloorPostUsesConcreteBelowInsteadOfSillWhollyAbo
   const auto r=row(p);EXPECT_EQ(r["status"],"detected");EXPECT_EQ(r["path_status"],"geometry_detected");
   ASSERT_EQ(r["candidates"].size(),1u);EXPECT_EQ(r["candidates"][0]["role"],"foundation_stem");
 }
+
+// docs/348: a column standing where two sills meet end to end (the frame splits its sills per bay, its columns at the
+// joints) is told apart from one hanging half off: "on_joint", not "partial"; it is still not one support.
+TEST_F(FoundationSupports, ColumnOnASillJointIsToldApartFromAPartialOne) {
+  member("sill",{0,0,540},{1500,0,540});member("sill",{1500,0,540},{3000,0,540});
+  const auto c=member("column",{1500,0,540},{1500,0,3000},105);
+  auto r=row(c);
+  EXPECT_EQ(r["status"],"on_joint");
+  ASSERT_EQ(r["candidates"].size(),2u);
+  EXPECT_NEAR(r["candidates"][0]["coverage_ratio"].get<double>()+r["candidates"][1]["coverage_ratio"].get<double>(),1.0,1e-6);
+  EXPECT_EQ(r["path_status"],"needs_review");
+  // Half of it off the end of one sill (nothing beyond): still partial.
+  const auto d=member("column",{3000,0,540},{3000,0,3000},105);
+  EXPECT_EQ(row(d)["status"],"partial");
+}

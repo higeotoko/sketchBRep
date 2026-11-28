@@ -198,6 +198,17 @@ Result<std::string> foundationSupports(const doc::Document& d,const std::string&
       int full=0,matching=0;
       for(const auto& c:candidates) if(c["coverage_ratio"].get<double>()>=1-1e-6) {++full;if(c["gap_matches"]==true) ++matching;}
       row["status"]=candidates.empty()?"missing":full==0?"partial":full>1?"ambiguous":matching==1?"detected":nearest < -tolerance?"interference":"gap";
+      // docs/348: a column whose foot two sills cover between them, end to end (it stands on their joint): not "partial"
+      // (no part of it hangs free), but not one support either. Pads stay as they were (two half pads stay partial).
+      if(full==0 && (own.role=="column" || own.role=="through_column") && candidates.size()>=2) {
+        double sum=0;bool sills=true,gaps=true;
+        for(const auto& c:candidates) {
+          sum+=c["coverage_ratio"].get<double>();
+          sills=sills && c.value("role",std::string())=="sill";
+          gaps=gaps && c["gap_matches"]==true;
+        }
+        if(sills && gaps && sum>=1-1e-3) row["status"]="on_joint";
+      }
       return row;
     };
     // Compute sills first so a column can refer to their independent concrete support diagnostics.

@@ -1305,7 +1305,9 @@ std::vector<PermitCheck> permitFoundationChecks(const Document& document) {
         looseIds.push_back(row.at("id").get<std::string>());
       if (looseIds.size() <= 5) {
         loose += "\n" + row.value("name", std::string()) + "　" +
-                 (status == "missing" ? "支えが見つからない" : status == "partial" ? "一部だけ支えに乗る" : status == "not_evaluated" ? "未評価" : status);
+                 (status == "missing" ? "支えが見つからない" : status == "partial" ? "一部だけ支えに乗る"
+                  : status == "on_joint" ? "2本の土台の継ぎ目に乗る（継手の位置は仕様書で確かめる）"  // docs/348
+                  : status == "not_evaluated" ? "未評価" : status);
         if (const std::string why = row.value("reason", std::string()); !why.empty()) loose += "（" + why + "）";
       }
     }
