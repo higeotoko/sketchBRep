@@ -6399,12 +6399,17 @@ Result<DrawingSet> drawingSet(const Document& document, const DrawingSetSpec& gi
         draw::View named = *view;
         named.spec.title = p->view->title;
         if (viewSpec.kind == draw::ViewKind::Plan) northOf[i] = view->trueNorth;
-        // docs/145: a section names the plan sheets it is marked on (where it is cut).
+        // docs/145: a section names the plan sheets it is marked on (where it is cut). docs/355: the floor plans
+        // (平面図) only: with the bracing and insulation plans too, six sheets ran the title off the frame.
         if (viewSpec.kind == draw::ViewKind::Section) {
           std::string plans;
+          const std::string floorPlan = "平面図";
+          const auto isFloorPlan = [&](const std::string& name) {
+            return name.size() >= floorPlan.size() && name.compare(name.size() - floorPlan.size(), floorPlan.size(), floorPlan) == 0;
+          };
           for (std::size_t k = 0; k < names.size(); ++k)
             for (const Planned& q : planned)
-              if (q.name == names[k] && q.view && q.view->kind == draw::ViewKind::Plan) {
+              if (q.name == names[k] && q.view && q.view->kind == draw::ViewKind::Plan && isFloorPlan(q.name)) {
                 const std::string n = number(sheetOf[k] + 2);
                 if (plans.find(n) == std::string::npos) plans += (plans.empty() ? "" : "・") + n;
               }

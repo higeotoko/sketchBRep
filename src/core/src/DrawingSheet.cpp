@@ -750,7 +750,9 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   // an even number of bays the middle grid line ran through the whole length's value ("9,100"); on plans they ran
   // through the room names, the opening marks, the 防 of fire doors and the detectors' symbols. The bubbles' own
   // names are inside their circles, clear of their line. After the marks are placed: an opening's mark does not
-  // step aside for a grid line, the line stops at it.
+  // step aside for a grid line, the line stops at it. docs/355: the level lines too (1FL, 基礎天端...), across
+  // sections and elevations: they ran through the boundaries' names, the height dimensions' values ("600",
+  // "軒の高さ 6,200") and the other levels' names. A level's own name stands 1 mm over its line, clear of it.
   {
     std::vector<Item> values;
     for (const Item& i : items)
@@ -760,11 +762,13 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     std::vector<Item> kept;
     kept.reserve(items.size());
     for (Item& item : items) {
-      if (item.kind != Item::Kind::Line || item.pen != Pen::Grid || item.points.size() != 2 || words.empty()) {
+      if (item.kind != Item::Kind::Line || (item.pen != Pen::Grid && item.pen != Pen::Level) || item.points.size() != 2 ||
+          words.empty()) {
         kept.push_back(std::move(item));
         continue;
       }
-      for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) kept.push_back(line(Pen::Grid, p, q));
+      const Pen pen = item.pen;
+      for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) kept.push_back(line(pen, p, q));
     }
     items = std::move(kept);
   }

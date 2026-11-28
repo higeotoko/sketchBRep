@@ -1874,7 +1874,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       for (const doc::FloorLevel& l : document.settings().levels)
         if (doc::isGroundLevelName(l.name)) ground = l.elevation, groundName = l.name;
     }
-    double top = -1e300, eave = -1e300, right = -1e300;
+    double top = -1e300, eave = -1e300, right = -1e300, leftEdge = 1e300;
     for (const doc::Object& o : document.objects()) {
       if (o.shape.IsNull() || !document.isVisible(o.id)) continue;
       const auto kind = o.attributes.find("kind");
@@ -1894,7 +1894,10 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
         eave = std::max(eave, wallEave);
       }
       for (double x : {x0, x1})
-        for (double y : {y0, y1}) right = std::max(right, proj.uv(gp_Pnt(x, y, 0)).X());
+        for (double y : {y0, y1}) {
+          right = std::max(right, proj.uv(gp_Pnt(x, y, 0)).X());
+          leftEdge = std::min(leftEdge, proj.uv(gp_Pnt(x, y, 0)).X());
+        }
     }
     // docs/320: where this view meets the site's boundary (a section: where the cut crosses the outline; an
     // elevation: the outline's ends), in view U.
@@ -1923,11 +1926,28 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       }
       return us;
     };
-    // The height dimensions start past a site boundary close to the building's right (not on top of it).
+    // docs/355: when this view sees the road across on the building's right (an elevation or section facing along
+    // the road's edge, docs/305), the height dimensions go on the left: on the right they ran through the road's
+    // boundaries, its name and the road slant.
+    bool roadRight = false;
+    if (const auto& site = document.settings().siteBoundary; site && site->road && site->road->widthMm > 0 && right > leftEdge) {
+      const auto boundary = document.siteBoundaryGeometry(site->outline);
+      const auto edge = boundary ? document.siteRoadEdge(*boundary) : std::nullopt;
+      const gp_Vec along = edge ? gp_Vec((*edge)[0], (*edge)[1]) : gp_Vec();
+      if (edge && along.Magnitude() > 1.0 && std::abs(along.Normalized().Dot(gp_Vec(spec.frame.Direction()))) > 0.9) {
+        const gp_Pnt mid(((*edge)[0].XYZ() + (*edge)[1].XYZ()) / 2);
+        roadRight = proj.uv(mid).X() > (leftEdge + right) / 2;
+      }
+    }
+    // The height dimensions start past a site boundary close to the building's side (not on top of it).
+    double side = roadRight ? leftEdge : right;
+    const double outward = roadRight ? -1.0 : 1.0;
     if (right > -1e299) {
       const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
-      for (const double u : siteBoundaryUs())
-        if (u > right - 1.0 && u < right + 30.0 * sp) right = std::max(right, u);
+      for (const double u : siteBoundaryUs()) {
+        const double past = (u - side) * outward;
+        if (past > -1.0 && past < 30.0 * sp) side = roadRight ? std::min(side, u) : std::max(side, u);
+      }
     }
     if (ground && top > *ground && right > -1e299) {
       const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
@@ -1949,12 +1969,12 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       for (const auto& l : floors) chain.push_back(l.elevation);
       if (eave > -1e299 && eave > chain.back() + 1.0) chain.push_back(eave);
       for (std::size_t i = 0; i + 1 < chain.size(); ++i)
-        view.dimensions.push_back({gp_Pnt2d(right, at(chain[i])), gp_Pnt2d(right, at(chain[i + 1])), gp_Vec2d(10.0 * sp, 0),
+        view.dimensions.push_back({gp_Pnt2d(side, at(chain[i])), gp_Pnt2d(side, at(chain[i + 1])), gp_Vec2d(outward * 10.0 * sp, 0),
                                    grouped(chain[i + 1] - chain[i])});
       if (eave > *ground + 1.0)
-        view.dimensions.push_back({gp_Pnt2d(right, at(*ground)), gp_Pnt2d(right, at(eave)), gp_Vec2d(18.0 * sp, 0),
+        view.dimensions.push_back({gp_Pnt2d(side, at(*ground)), gp_Pnt2d(side, at(eave)), gp_Vec2d(outward * 18.0 * sp, 0),
                                    "軒の高さ " + grouped(eave - *ground)});
-      view.dimensions.push_back({gp_Pnt2d(right, at(*ground)), gp_Pnt2d(right, at(top)), gp_Vec2d(26.0 * sp, 0),
+      view.dimensions.push_back({gp_Pnt2d(side, at(*ground)), gp_Pnt2d(side, at(top)), gp_Vec2d(outward * 26.0 * sp, 0),
                                  "最高の高さ " + grouped(top - *ground)});
       if (groundName == "平均地盤面") {
         LevelMark m;

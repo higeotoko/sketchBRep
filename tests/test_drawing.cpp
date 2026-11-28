@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -21,6 +22,7 @@
 #include "sbr/doc/GroundLevel.h"
 #include "sbr/doc/NativeFormat.h"
 #include "sbr/draw/Drawing.h"
+#include "sbr/draw/SheetCheck.h"
 #include "sbr/geom/Dxf.h"
 #include "sbr/geom/Jww.h"
 
@@ -654,12 +656,19 @@ TEST(Drawing, GridLevelsSheetAndTitleBlock) {
   EXPECT_EQ(section->levels.size(), 3u);
   const auto sectionSheet = layoutSheet(*section, spec);
   ASSERT_TRUE(sectionSheet);
-  EXPECT_EQ(count(*sectionSheet, Pen::Level, Item::Kind::Line), 3);
+  // docs/355: a level's line may stop short of words it passes (in pieces): the levels counted by their heights.
+  const auto levelLines = [](const Sheet& sheet) {
+    std::set<long long> heights;
+    for (const Item& i : sheet.items)
+      if (i.pen == Pen::Level && i.kind == Item::Kind::Line) heights.insert(std::llround(i.points.front().Y()));
+    return static_cast<int>(heights.size());
+  };
+  EXPECT_EQ(levelLines(*sectionSheet), 3);
   // Two levels at one height share a line and a name.
   ASSERT_TRUE(m.setLevels({{"", "GL", 0.0}, {"", "1FL", 0.0}, {"", "2FL", 3500.0}}));
   const auto shared = layoutSheet(*makeView(m.document(), sectionView(gp_Pnt(0, 2500, 0), gp_Dir(0, -1, 0))), spec);
   ASSERT_TRUE(shared);
-  EXPECT_EQ(count(*shared, Pen::Level, Item::Kind::Line), 2);
+  EXPECT_EQ(levelLines(*shared), 2);
   bool both = false;
   for (const Item& i : shared->items) both |= i.text == "GL・1FL";
   EXPECT_TRUE(both);
