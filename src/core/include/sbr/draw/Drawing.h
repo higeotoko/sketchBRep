@@ -210,7 +210,8 @@ struct View {
   std::vector<MemberMark> members;
   // Words placed on the sheet where they are clear (a leader back to `at` when moved). `opening`: an opening's mark
   // (docs/353): a smaller clearance, looked for close by only, and left where it is when nothing near is clear.
-  struct BracingMark { gp_Pnt2d at; std::string text; double height; bool opening = false; };
+  // `room` (docs/354): a room's tag that has no place in its room, written as text (its leader to the marker).
+  struct BracingMark { gp_Pnt2d at; std::string text; double height; bool opening = false; bool room = false; };
   std::vector<BracingMark> bracingMarks;
   struct RoomTag { std::size_t item; std::vector<gp_Pnt2d> outline; };
   std::vector<RoomTag> roomTags;  // room tags movable within their room on a bracing plan

@@ -202,7 +202,7 @@ void placeBracingMarks(std::vector<Item>& items, const std::vector<View::Bracing
   for (const Item& item : items) extentOf(item, scale, occupied);
   std::vector<std::pair<gp_Pnt2d, gp_Pnt2d>> leaders;
   for (const View::BracingMark& mark : marks) {
-    Item label = text(mark.opening ? Pen::Text : Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
+    Item label = text(mark.opening || mark.room ? Pen::Text : Pen::Visible, mark.at, mark.text, mark.height, 1, 1);
     const double gap = mark.opening ? 0.2 : kLabelGap;
     // An opening's mark does not step aside for a grid line: the grid lines stop at the words (docs/353).
     std::vector<Item> notGrid;

@@ -2301,6 +2301,8 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
     // docs/334: the room tags' line blocks and the devices drawn, so a tag can step off a device.
     struct TagBlock {
       std::size_t first, count;
+      doc::ObjectId room;  // docs/354
+      gp_Pnt2d at;         // the room's marker
     };
     std::vector<TagBlock> tagBlocks;
     std::vector<gp_Pnt2d> devicePoints;
@@ -2403,7 +2405,7 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             const double step = 3.2 * sp;  // paper mm between lines
             const gp_Pnt2d at = text.points.front();
             const double top = at.Y() + step * (static_cast<double>(lines->second.size()) - 1) / 2;
-            tagBlocks.push_back({view.items.size(), lines->second.size()});
+            tagBlocks.push_back({view.items.size(), lines->second.size(), o.id, at});
             for (std::size_t k = 0; k < lines->second.size(); ++k) {
               Item line = text;
               line.text = lines->second[k];
@@ -2453,6 +2455,54 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
             drop = std::max(drop, y1 - (d.Y() - reach));
         if (drop <= 0) continue;
         for (std::size_t k = b.first; k < b.first + b.count; ++k) view.items[k].points.front().SetY(view.items[k].points.front().Y() - drop);
+      }
+    }
+    // docs/354: a room's tag inside its room and off the lines drawn there (walls, a stair, a door's swing, the
+    // devices): where it is when that is so; else the nearest place in the room that is; else, when the room has
+    // no such place (a hall over its stair, a WC), its lines as one ("ホール・階段 (3.31 m²) (CH2400)") placed on the
+    // sheet where it is clear, with a leader back to the room's marker. Nothing of it is left out.
+    if (!tagBlocks.empty()) {
+      const double sp = spec.paperScale > 0 ? spec.paperScale : 100.0;
+      std::map<doc::ObjectId, std::vector<gp_Pnt2d>> inside;
+      for (const doc::RoomInfo& room : doc::Modeler::roomsIn(document)) {
+        if (!room.closed || !room.innerKnown) continue;
+        auto& outline = inside[room.id];
+        for (const gp_Pnt& corner : room.inner) outline.push_back(proj.uv(corner));
+      }
+      for (const TagBlock& b : tagBlocks) {
+        const auto outline = inside.find(b.room);
+        if (outline == inside.end() || outline->second.size() < 3) continue;
+        std::vector<Item> others;
+        others.reserve(view.items.size());
+        for (std::size_t k = 0; k < view.items.size(); ++k)
+          if (k < b.first || k >= b.first + b.count) others.push_back(view.items[k]);
+        const auto fits = [&](double dx, double dy) {
+          for (std::size_t k = b.first; k < b.first + b.count; ++k) {
+            Item moved = view.items[k];
+            moved.points.front().SetCoord(moved.points.front().X() + dx, moved.points.front().Y() + dy);
+            if (!textFitsInside(moved, outline->second, sp, 0.3) || !textIsClear(moved, others, sp, 0.3)) return false;
+          }
+          return true;
+        };
+        if (fits(0, 0)) continue;
+        bool placed = false;
+        const double step = 1.5 * sp;
+        for (int ring = 1; ring <= 16 && !placed; ++ring)
+          for (int i = -ring; i <= ring && !placed; ++i)
+            for (int j = -ring; j <= ring && !placed; ++j) {
+              if (std::max(std::abs(i), std::abs(j)) != ring || !fits(i * step, j * step)) continue;
+              for (std::size_t k = b.first; k < b.first + b.count; ++k)
+                view.items[k].points.front().SetCoord(view.items[k].points.front().X() + i * step,
+                                                      view.items[k].points.front().Y() + j * step);
+              placed = true;
+            }
+        if (placed) continue;
+        std::string one;
+        for (std::size_t k = b.first; k < b.first + b.count; ++k) {
+          one += (one.empty() ? "" : " ") + view.items[k].text;
+          view.items[k].text.clear();  // written once, on the sheet
+        }
+        view.bracingMarks.push_back({b.at, one, 2.5, false, true});
       }
     }
   }

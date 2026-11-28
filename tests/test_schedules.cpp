@@ -5861,3 +5861,40 @@ TEST(PermitIntake, EavesStayAtTheRoofsBearingWhenWallsAreFitted) {
     EXPECT_TRUE(top) << name;  // the ridge, above the eaves
   }
 }
+
+// docs/354: a room's tag stays in its room where it fits (居間); a room too small for it (a WC of 910 square) has its
+// lines written as one on the sheet, with a leader to its marker, nothing left out.
+TEST_F(Schedules, RoomTagsTooBigForTheirRoomGoOutWithALeader) {
+  ok("create_wall", {{"points", {{6000, 4000}, {6910, 4000}, {6910, 4910}, {6000, 4910}, {6000, 4000}}},
+                     {"thickness", 100}, {"height", 3000}});
+  ok("create_room", {{"at", {6455, 4455}}, {"name", "WC"}});
+  sbr::draw::ViewSpec spec = sbr::draw::planView(1100);
+  spec.paperScale = 100;
+  const auto view = sbr::draw::makeView(modeler.document(), spec);
+  ASSERT_TRUE(view) << view.error();
+  bool living = false, wcInRoom = false;
+  for (const auto& i : view->items) {
+    living = living || (i.kind == sbr::draw::Item::Kind::Text && i.text == "居間");
+    wcInRoom = wcInRoom || (i.kind == sbr::draw::Item::Kind::Text && i.text == "WC");
+  }
+  EXPECT_TRUE(living);
+  EXPECT_FALSE(wcInRoom);
+  int out = 0;
+  for (const auto& m : view->bracingMarks)
+    if (m.room) {
+      ++out;
+      EXPECT_EQ(m.text.rfind("WC (", 0), 0u) << m.text;
+      EXPECT_NE(m.text.find("m²)"), std::string::npos) << m.text;
+      EXPECT_NEAR(m.at.X(), 6455, 1e-6);
+      EXPECT_NEAR(m.at.Y(), 4455, 1e-6);
+    }
+  EXPECT_EQ(out, 1);
+  // On the sheet: the one line and its leader.
+  sbr::draw::SheetSpec sheetSpec;
+  sheetSpec.scale = 100;
+  const auto sheet = sbr::draw::layoutSheet(*view, sheetSpec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  int written = 0;
+  for (const auto& i : sheet->items) written += i.kind == sbr::draw::Item::Kind::Text && i.text.rfind("WC (", 0) == 0;
+  EXPECT_EQ(written, 1);
+}
