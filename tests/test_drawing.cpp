@@ -1676,3 +1676,52 @@ TEST(Drawing, MemberLeadersEndAtTheLabelsNearCorner) {
   ASSERT_FALSE(leaders.empty());
   EXPECT_TRUE(textIsClear(*label, leaders, 50, 0.0));
 }
+
+// docs/357: a dashed line (a side part's box) stops at a word on it; a level's long name ends short of height
+// dimensions put on the left.
+TEST(Drawing, DashedLinesAndLevelNamesKeepOffTheWords) {
+  View view;
+  Item box;
+  box.kind = Item::Kind::Polyline;
+  box.pen = Pen::Hidden;
+  box.closed = true;
+  box.points = {gp_Pnt2d(0, 0), gp_Pnt2d(4000, 0), gp_Pnt2d(4000, 3000), gp_Pnt2d(0, 3000)};
+  view.items.push_back(box);
+  Item word;
+  word.kind = Item::Kind::Text;
+  word.pen = Pen::Text;
+  word.points = {gp_Pnt2d(2000, 3000)};  // on the box's top side
+  word.text = "主寝室  33.12 m²";
+  word.height = 2.5;
+  word.hAlign = 1;
+  word.vAlign = 1;
+  view.items.push_back(word);
+  LevelMark ground;
+  ground.v = 0;
+  ground.name = "平均地盤面・GL";
+  ground.elevation = 0;
+  view.levels.push_back(ground);
+  view.dimensions.push_back({gp_Pnt2d(0, 0), gp_Pnt2d(0, 3000), gp_Vec2d(-1000, 0), "3,000"});  // on the left
+  SheetSpec spec;
+  spec.scale = 100;
+  const auto sheet = layoutSheet(view, spec);
+  ASSERT_TRUE(sheet) << sheet.error();
+  std::vector<Item> dashed, dimensionLines;
+  for (const Item& i : sheet->items) {
+    if (i.pen == Pen::Hidden && (i.kind == Item::Kind::Line || i.kind == Item::Kind::Polyline)) dashed.push_back(i);
+    if (i.pen == Pen::Dimension && i.kind == Item::Kind::Line) dimensionLines.push_back(i);
+  }
+  int seen = 0;
+  for (const Item& i : sheet->items) {
+    if (i.kind != Item::Kind::Text) continue;
+    if (i.text == "主寝室  33.12 m²") {
+      ++seen;
+      EXPECT_TRUE(textIsClear(i, dashed, 100, 0.0));
+    }
+    if (i.text == "平均地盤面・GL") {
+      ++seen;
+      EXPECT_TRUE(textIsClear(i, dimensionLines, 100, 0.0));
+    }
+  }
+  EXPECT_EQ(seen, 2);
+}
