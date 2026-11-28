@@ -333,7 +333,7 @@ void appendLegend(std::vector<Item>& items, const Paper* paper, double s, const 
       const double y0 = y - 1.4, y1 = y + 1.4;
       if (hatches[h].first == 13 || hatches[h].first == 14) {  // docs/340: 管柱 ×, 間柱 ／ in their cut
         const double cx = x + sample / 2;
-        const double hw = hatches[h].first == 13 ? 0.9 : 0.45, hh = 0.9;
+        const double hw = hatches[h].first == 13 ? 1.4 : 0.7, hh = 1.4;  // larger than the cut at 1:100, to be read
         Item box;
         box.kind = Item::Kind::Polyline;
         box.pen = Pen::Cut;
