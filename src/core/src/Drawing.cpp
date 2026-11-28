@@ -1725,7 +1725,13 @@ Result<View> makeView(const doc::Document& document, const ViewSpec& spec) {
       double x0, y0, z0, x1, y1, z1;
       b.Get(x0, y0, z0, x1, y1, z1);
       top = std::max(top, z1);
-      if (k == "wall") eave = std::max(eave, z1);
+      // docs/345: a wall fitted up to a roof (its gable running to the ridge) has its eaves where the roof bears on it.
+      if (k == "wall") {
+        double wallEave = z1;
+        if (const auto r = o.attributes.find("top_roof"); r != o.attributes.end())
+          if (const auto bearing = doc::Modeler::roofBearingZ(document, r->second)) wallEave = std::min(z1, *bearing);
+        eave = std::max(eave, wallEave);
+      }
       for (double x : {x0, x1})
         for (double y : {y0, y1}) right = std::max(right, proj.uv(gp_Pnt(x, y, 0)).X());
     }

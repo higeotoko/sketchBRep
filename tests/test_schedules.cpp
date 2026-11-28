@@ -5810,3 +5810,40 @@ TEST_F(Schedules, LongLegendsKeepClearOfTheTitleBlock) {
   }
   EXPECT_EQ(legendWords, 10);  // every device and the 防火設備: none dropped
 }
+
+// docs/345: walls fitted up to a gable roof (their gable ends running to the ridge) keep the eaves' height where the
+// roof bears on them; it was taken from the walls' highest point, the ridge.
+TEST(PermitIntake, EavesStayAtTheRoofsBearingWhenWallsAreFitted) {
+  sbr::doc::Modeler modeler;
+  CommandApi api{modeler};
+  auto call = [&](const std::string& command, json args) {
+    return json::parse(api.execute(json{{"command", command}, {"args", args}}.dump()));
+  };
+  auto ok = [&](const std::string& command, json args) {
+    json r = call(command, args);
+    EXPECT_TRUE(r.value("ok", false)) << command << ": " << r.dump();
+    return r.value("result", json());
+  };
+  ASSERT_TRUE(modeler.setLevels({{"", "GL", 0}, {"", "1FL", 600}, {"", "2FL", 3500}, {"", "桁天端", 6200}}));
+  const json rect = {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}, {0, 0}};
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2900}, {"base", 600}});
+  ok("create_wall", {{"points", rect}, {"thickness", 120}, {"height", 2700}, {"base", 3500}});
+  const std::string roof = ok("create_roof", {{"outline", {{0, 0}, {8000, 0}, {8000, 6000}, {0, 6000}}}, {"kind", "gable"}, {"height", 6200}})["id"];
+  ok("fit_walls_to_roof", {{"roof", roof}});
+  ASSERT_TRUE(sbr::doc::Modeler::roofBearingZ(modeler.document(), roof));
+  EXPECT_NEAR(*sbr::doc::Modeler::roofBearingZ(modeler.document(), roof), 6200.0, 1e-6);
+  const auto set = sbr::doc::drawingSet(modeler.document(), {});
+  ASSERT_TRUE(set) << set.error();
+  for (const char* name : {"南立面図", "東立面図"}) {
+    const auto at = std::find(set->names.begin(), set->names.end(), std::string(name));
+    ASSERT_NE(at, set->names.end());
+    const auto& sheet = set->sheets[static_cast<std::size_t>(at - set->names.begin())];
+    bool eaves = false, top = false;
+    for (const auto& i : sheet.items) {
+      eaves = eaves || i.text == "軒の高さ 6,200";
+      top = top || (i.text.rfind("最高の高さ ", 0) == 0 && i.text != "最高の高さ 6,200");
+    }
+    EXPECT_TRUE(eaves) << name;
+    EXPECT_TRUE(top) << name;  // the ridge, above the eaves
+  }
+}

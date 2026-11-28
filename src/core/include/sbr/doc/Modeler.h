@@ -587,6 +587,9 @@ class Modeler {
   Result<ObjectId> createRoof(const geom::RoofSpec& spec);
   // Refused for an object that is not such a roof any more (its shape edited, or tilted).
   Result<RoofInfo> roofInfo(const ObjectId& id) const;
+  // docs/345: the world z a roof bears on (its underside above the outline: the top of the plates it sits on), for the
+  // eaves' height of walls fitted up to it (a gable wall's top runs up to the ridge); empty for anything else.
+  static std::optional<double> roofBearingZ(const Document& document, const ObjectId& roof);
   // The same roof with other sizes (the same object). One undo step.
   Status changeRoof(const ObjectId& id, const geom::RoofSpec& spec);
 

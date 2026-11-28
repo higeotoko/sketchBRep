@@ -9244,6 +9244,12 @@ Result<ObjectId> Modeler::createRoof(const geom::RoofSpec& spec) {
   return addObject(std::move(o), "Roof");
 }
 
+std::optional<double> Modeler::roofBearingZ(const Document& document, const ObjectId& roof) {
+  const auto stored = storedRoof(document, roof);
+  if (!stored) return std::nullopt;
+  return roofInFrame(stored->first, stored->second).height;
+}
+
 Result<RoofInfo> Modeler::roofInfo(const ObjectId& id) const {
   using R = Result<RoofInfo>;
   const auto stored = storedRoof(document_, id);
