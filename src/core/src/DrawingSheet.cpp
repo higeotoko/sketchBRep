@@ -191,11 +191,15 @@ void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& t
     std::vector<Item> notGrid;
     for (const Item& i : items)
       if (i.pen != Pen::Grid) notGrid.push_back(i);
-    if (!textIsClear(label, notGrid, scale, kLabelGap)) {
-      findNearbyPosition(label, scale, 16, [&](const Item& candidate) {
-        return textFitsInside(candidate, tag.outline, scale, kLabelGap) &&
-               textIsClear(candidate, notGrid, scale, kLabelGap);
-      });
+    const auto fits = [&](const Item& candidate) {
+      return textFitsInside(candidate, tag.outline, scale, kLabelGap) && textIsClear(candidate, notGrid, scale, kLabelGap);
+    };
+    if (!fits(label) && !findNearbyPosition(label, scale, 16, fits)) {
+      // docs/356: a name too long for its room at its height is tried again smaller (2.5 mm, as the other words);
+      // kept where it was when that does not fit either.
+      Item smaller = label;
+      smaller.height = std::min(label.height, 2.5);
+      if (smaller.height < label.height && (fits(smaller) || findNearbyPosition(smaller, scale, 16, fits))) label = smaller;
     }
     slot = std::move(label);
   }
