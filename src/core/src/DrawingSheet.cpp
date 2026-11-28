@@ -612,7 +612,11 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
   std::sort(levels.begin(), levels.end(), [](const LevelMark& a, const LevelMark& b) { return a.v < b.v; });
   double previousV = -1e300, previousLeft = 0.0;
   for (const LevelMark& l : levels) {
-    const double u0 = model.x0 - 3 * margin, u1 = model.x1 + margin;
+    // docs/355: left of the dimensions too (the height dimensions on the left, when the road is on the right).
+    double leftmost = model.x0;
+    for (const DimensionMark& d : view.dimensions)
+      for (const gp_Pnt2d& p : {d.a, d.b}) leftmost = std::min(leftmost, p.X() + std::min(0.0, d.offset.X()) - 4.0 * s);
+    const double u0 = leftmost - 3 * margin, u1 = model.x1 + margin;
     const std::string h = std::abs(l.elevation) < 0.5 ? "±0" : (l.elevation > 0 ? "+" : "") + mm(l.elevation);
     // docs/300: a level is marked with a triangle on its line (▽, the ground ▼) and its name beside it,
     // as Japanese elevations and sections write heights (▽2FL); the height under the name.
