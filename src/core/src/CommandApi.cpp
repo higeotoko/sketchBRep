@@ -4325,6 +4325,15 @@ const std::vector<CommandDef>& commands() {
          if (a.value("include_csv", false)) report["csv"] = construction::wallQuantityCsv(report.dump());
          return report;
        }},
+      {"column_n_values",
+       "Read-only (docs/358): 柱頭・柱脚の接合方法 by the N value method (令47条1項, 平12建告1460号) for the frame's columns "
+       "at the bearing walls of the saved wall calculation. Per column and direction: the wall ratios on its two sides, the "
+       "frame's braces at it (head / foot / cross) and their correction (MLIT manual 表3-14), A1/B1/H1, for a first-floor "
+       "column under the second floor A2/B2/H2, L and N; the larger N chooses the joint (い)-(ぬ) of 告示1460号 表三. "
+       "Needs the wall calculation (walls with start/end, height_mm; floors with plan for 出隅), the frame (columns, braces) "
+       "and level 2FL for two storeys; what is missing is not_evaluated with the reason. No product is chosen.",
+       SCHEMA({"type":"object","properties":{}}),
+       [](doc::Modeler& m, const json&) { return json::parse(must(construction::columnNValues(m.document()))); }},
       {"set_wall_calculation",
        "Replace timber wall calculation inputs and pin coefficient-table snapshot in project; one undo. "
        "inputs: {height_m,co_designated:bool,wind_coefficient_cm_m2,input_basis,frame?,"

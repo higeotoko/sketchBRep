@@ -552,7 +552,8 @@ Result<std::string> checkFrame(const doc::Document& d, const std::string& text,
         }
       }
     }
-    emit("LAT-03", {}, "not_evaluated", "calculation_not_implemented", "N値の検査器と根拠表は未実装です");
+    emit("LAT-03", {}, "not_evaluated", "joint_match_not_implemented",
+         "N値は column_n_values で計算します（docs/358）。N値で選んだ接合方法と架構の金物の実物との照合は未実装です");
     emit("SEC-01", {}, "not_applicable", "outside_stage_scope", "断面照査は今回の対象外です");
     // An empty selection cannot earn a green rule result.
     if (selectedCount == 0)

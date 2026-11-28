@@ -159,7 +159,7 @@ Result<std::string> structuralDiagnostics(const doc::Document& d, const std::str
     out["counts"] = {{"frame_fail", frameFail}, {"frame_not_evaluated", frameOpen}, {"support_issues", supportOpen},
                      {"walls", out["walls"].size()}};
     // Checks this app does not compute yet: shown as unassessed, never as passing.
-    out["unassessed"] = {"四分割法の下屋・一部だけ上階が載る側端部分", "N値（柱頭・柱脚の接合）", "柱の小径・直下率",
+    out["unassessed"] = {"四分割法の下屋・一部だけ上階が載る側端部分", "N値で選んだ柱頭・柱脚の接合方法と金物の実物の照合", "柱の小径・直下率",
                          "横架材の断面", "地盤・基礎の構造計算"};
     return out.dump();
   } catch (const std::exception& e) {

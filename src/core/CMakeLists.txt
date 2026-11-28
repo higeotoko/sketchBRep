@@ -28,6 +28,7 @@ add_library(sbr_core STATIC
   src/WallTypes.cpp
   src/ConstructionQuantity.cpp
   src/ConstructionWall.cpp
+  src/ConstructionNValue.cpp
   src/ConstructionWallBays.cpp
   src/Operations.cpp
   src/Arrangement.cpp

@@ -180,7 +180,9 @@ TEST(PermitBraceStage, RowsFollowTheWallQuantityCalculation) {
   EXPECT_NE(quantity.details.find("存在壁量"), std::string::npos);
   EXPECT_NE(quantity.state, "");
   EXPECT_NE(rowOf("照らした値").details.find("告示1100号"), std::string::npos);
-  EXPECT_NE(rowOf("まだ確かめていない事").details.find("N値"), std::string::npos);
+  // docs/358: 柱頭・柱脚 by the N value method in a row of its own (no frame here: not evaluated, with the reason).
+  EXPECT_EQ(rowOf("まだ確かめていない事").details.find("N値"), std::string::npos);
+  EXPECT_EQ(rowOf("柱頭・柱脚の接合（N値計算）").state, "要確認");
 }
 
 // docs/208: the wall quantity forms read the same calculation. X: 2 m + 0.5 m of 45x90 braces

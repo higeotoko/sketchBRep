@@ -231,3 +231,60 @@ TEST_F(TimberWorkflow, UpperPlanShowsTheStairThroughTheStairwellOnly) {
   EXPECT_TRUE(down);
   EXPECT_FALSE(up);
 }
+
+// docs/358: the N value of the columns at a second-floor single brace (45x90), by hand from the MLIT manual's
+// formulas (正誤表 2024-11-27) and 表3-14: the corner column carrying the brace's foot: A = 2.0 - 0.5 = 1.5,
+// N = 1.5 x 0.8 - 0.4 = 0.8 -> (は); the next column carrying its head: A = 2.0 + 0.5 = 2.5, N = 2.5 x 0.5 - 0.6 = 0.65
+// -> (ろ); the first-floor corner column under it (no wall of its own): N = 0 + 1.5 x 0.8 - 1.0 = 0.2 -> (ろ).
+#include "sbr/ConstructionWall.h"
+TEST_F(TimberWorkflow, ColumnNValuesFollowTheManualsFormula) {
+  make({{"x_bays", 4}, {"y_bays", 2}, {"braces", json::array({{{"storey", 2}, {"from", {0, 0}}, {"to", {1, 0}}}})}});
+  // Before a wall calculation: not evaluated, with the reason.
+  json none = json::parse(*construction::columnNValues(m.document()));
+  EXPECT_EQ(none["status"], "not_evaluated");
+  const auto floor = [](std::string id, double weight) {
+    return json{{"id", id}, {"name", id + "階"}, {"area_m2", 13.25}, {"weight_kn", weight}, {"wind_x_m2", 10},
+                {"wind_y_m2", 10}, {"walls_complete", true}, {"plan", {{"x", {0, 3640}}, {"y", {0, 1820}}}}};
+  };
+  const json in{{"height_m", 6}, {"co_designated", false}, {"wind_coefficient_cm_m2", 50},
+                {"input_basis", "計算テストの仮想入力（実建物ではない）"},
+                {"floors", {floor("1", 60), floor("2", 30)}},
+                {"walls", {{{"id", "w"}, {"floor", "2"}, {"direction", "X"}, {"spec", "brace_45x90"}, {"start", {0, 0}},
+                            {"end", {910, 0}}, {"height_mm", 2700}, {"verified", true}}}}};
+  ASSERT_TRUE(m.setWallCalculation(in.dump()));
+  const auto made = construction::columnNValues(m.document());
+  ASSERT_TRUE(made) << made.error();
+  const json r = json::parse(*made);
+  const auto column = [&](const std::string& floorName, double x, double y) {
+    for (const auto& c : r["columns"])
+      if (c["floor"] == floorName && std::abs(c["at"][0].get<double>() - x) < 1 && std::abs(c["at"][1].get<double>() - y) < 1)
+        return c;
+    ADD_FAILURE() << floorName << " " << x << "," << y << " " << r.dump();
+    return json();
+  };
+  const json corner = column("2階", 0, 0);
+  EXPECT_EQ(corner["status"], "evaluated") << corner.dump();
+  EXPECT_NEAR(corner["directions"]["X"]["correction"].get<double>(), -0.5, 1e-9);
+  EXPECT_NEAR(corner["N"].get<double>(), 0.8, 1e-9);
+  EXPECT_EQ(corner["joint"], "(は)");
+  const json next = column("2階", 910, 0);
+  EXPECT_NEAR(next["directions"]["X"]["A1"].get<double>(), 2.5, 1e-9);
+  EXPECT_NEAR(next["N"].get<double>(), 0.65, 1e-9);
+  EXPECT_EQ(next["joint"], "(ろ)");
+  const json under = column("1階", 0, 0);
+  EXPECT_EQ(under["second_floor_above"], true);
+  EXPECT_NEAR(under["N"].get<double>(), 0.2, 1e-9) << under.dump();
+  EXPECT_EQ(under["joint"], "(ろ)");
+  // A brace wall in the calculation with no frame brace: its correction cannot be told.
+  json more = in;
+  more["walls"].push_back({{"id", "v"}, {"floor", "2"}, {"direction", "Y"}, {"spec", "brace_45x90"}, {"start", {3640, 0}},
+                           {"end", {3640, 910}}, {"height_mm", 2700}, {"verified", true}});
+  ASSERT_TRUE(m.setWallCalculation(more.dump()));
+  const json r2 = json::parse(*construction::columnNValues(m.document()));
+  bool missing = false;
+  for (const auto& c : r2["columns"])
+    if (c["status"] == "not_evaluated")
+      for (const auto& why : c["reasons"]) missing = missing || why.get<std::string>().find("架構の筋かいが見つかりません") != std::string::npos;
+  EXPECT_TRUE(missing) << r2.dump();
+  EXPECT_EQ(r2["status"], "partial");
+}

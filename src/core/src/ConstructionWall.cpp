@@ -414,7 +414,7 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
       if (stale) notice += "表の確認から1年以上たっています。";
       if (future) notice += "表の施行日・確認日が計算日より後です。この日付では未評価です。";
     }
-    notice += "四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。N値・柱頭柱脚は未評価。"
+    notice += "四分割法は平成12年告示1352号（2025年4月から告示1100号第四）の考え方で別欄に計算。柱頭・柱脚の接合はN値計算（別の計算、docs/358）。"
               "準耐力壁等は告示1100号 別表第十の式で倍率を出し、存在壁量に入れる（耐力壁だけで必要壁量の1/2以上の確認つき。四分割法には、脆性的な破壊を確かめた場合だけ入れる）。";
     bool scoped = true;
     const std::string frame = in.value("frame", std::string());
@@ -680,7 +680,7 @@ Result<std::string> checkWallQuantity(const doc::Document& d, const std::string&
                 {"stale_table", stale},
                 {"complete", complete},
                 {"comparison_tolerance_m", 1e-10},
-                {"unassessed", {"N値", "柱頭柱脚", "準耐力壁等の脆性的な破壊の確認（入力の確認のみ）", "四分割法の下屋・一部だけ上階がある側端部分", "断面", "基礎"}}};
+                {"unassessed", {"準耐力壁等の脆性的な破壊の確認（入力の確認のみ）", "四分割法の下屋・一部だけ上階がある側端部分", "断面", "基礎"}}};
     return out.dump();
   } catch (const std::exception& e) {
     return Result<std::string>::failure(e.what());

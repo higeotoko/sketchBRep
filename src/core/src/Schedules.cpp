@@ -1243,6 +1243,32 @@ std::vector<PermitCheck> permitBraceChecks(const Document& document) {
   if (report.value("stale_table", false))
     out.push_back({"係数表", "要確認", "保存した係数表が、今の版と違います。表を確かめて入れ直します。", {}, true});
   out.push_back({"照らした値", "参考", report.value("notice", std::string()), {}});
+  // docs/358: 柱頭・柱脚の接合方法 by the N value method, read with the walls above.
+  if (const auto nv = construction::columnNValues(document)) {
+    const nlohmann::json n = nlohmann::json::parse(*nv);
+    const std::string status = n.value("status", std::string());
+    std::string details;
+    if (status == "not_evaluated" && n.value("columns", nlohmann::json::array()).empty()) {
+      for (const auto& why : n.value("reasons", nlohmann::json::array())) details += (details.empty() ? "" : "\n") + why.get<std::string>();
+    } else {
+      details = "計算した柱 " + std::to_string(n.value("evaluated", 0)) + "、未評価の柱 " + std::to_string(n.value("not_evaluated", 0));
+      std::string joints;
+      for (const auto& [mark, count] : n.value("joints", nlohmann::json::object()).items())
+        joints += (joints.empty() ? "" : "、") + mark + " " + std::to_string(count.get<int>()) + " 本";
+      if (!joints.empty()) details += "\n告示1460号 表三の接合方法：" + joints;
+      int shown = 0;
+      for (const auto& c : n.value("columns", nlohmann::json::array())) {
+        if (c.value("status", std::string()) == "evaluated" || shown >= 5) continue;
+        ++shown;
+        std::string why;
+        for (const auto& r : c.value("reasons", nlohmann::json::array())) why += (why.empty() ? "" : "／") + r.get<std::string>();
+        details += "\n" + c.value("floor", std::string()) + " " + c.value("column", std::string()) + "：" + why;
+      }
+      for (const auto& why : n.value("reasons", nlohmann::json::array())) details += "\n" + why.get<std::string>();
+    }
+    details += "\n" + n.value("basis", std::string()) + "\n金物の製品は選んでいません。架構の金物の実物との照合は未評価。";
+    out.push_back({"柱頭・柱脚の接合（N値計算）", status == "evaluated" ? "参考" : "要確認", details, {}, status != "evaluated"});
+  }
   std::string open;
   for (const auto& u : report.value("unassessed", nlohmann::json::array()))
     if (u.is_string()) open += (open.empty() ? "" : "、") + u.get<std::string>();
