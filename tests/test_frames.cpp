@@ -407,3 +407,29 @@ TEST_F(Frames, MovingAnAncestorProtectsTheFramesWorldPlacement) {
   EXPECT_NEAR(endpoint(column, false).X(), before.X() + 200, 1e-6);
   EXPECT_NEAR(endpoint(column, false).Y(), before.Y() + 300, 1e-6);
 }
+
+// docs/343: asked to, the frame leaves out the columns standing in an opening (and their connections); the brace stays
+// flagged; without asking, nothing changes (OpeningConflictsWarnAndKeepStructuralColumnsAndBraces).
+TEST_F(Frames, ColumnsInOpeningsCanBeLeftOut) {
+  const auto walls = m.createWalls({{0, 0, 600}, {2730, 0, 600}}, 120, 2400);
+  ASSERT_TRUE(walls);
+  const auto cut = m.placeOpenings(walls->front(), gp::DY(), 1, 1800, 1000, 700);
+  ASSERT_TRUE(cut);
+  const auto made = frame({{"x_bays", 3}, {"y_bays", 2}, {"storeys", 1}, {"opening_hosts", {*cut}}, {"omit_columns_in_openings", true},
+                           {"braces", json::array({{{"storey", 1}, {"from", {1, 0}}, {"to", {2, 0}}}})}});
+  EXPECT_EQ(made["counts"]["column"], 8);  // 10 less the 2 in the opening
+  int flaggedColumns = 0, flaggedBraces = 0, connections = 0;
+  for (const auto& object : m.document().objects()) {
+    const auto kind = object.attributes.find("kind");
+    if (kind != object.attributes.end() && kind->second == "column_connection") ++connections;
+    if (!object.attributes.count("opening_conflict")) continue;
+    if (object.attributes.at("kind") == "column") ++flaggedColumns;
+    if (object.attributes.at("kind") == "brace") ++flaggedBraces;
+  }
+  EXPECT_EQ(flaggedColumns, 0);
+  EXPECT_EQ(flaggedBraces, 1);
+  int omittedWarnings = 0;
+  for (const auto& w : made["warnings"]) omittedWarnings += w.get<std::string>().rfind("開口の中の柱を省きました", 0) == 0;
+  EXPECT_EQ(omittedWarnings, 2);
+  EXPECT_EQ(connections % 2, 0);  // each column's foot and head together
+}

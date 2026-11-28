@@ -4255,7 +4255,7 @@ const std::vector<CommandDef>& commands() {
        "first_floor_system/second_floor_system:joist|joistless,floor_zones:[{storey, x:[i,j],y:[i,j],system}], "
        "floor_openings:[{storey:2,x:[2,4],y:[1,3]}] omits flooring/joists/beams inside grid-aligned apertures "
        "and adds missing boundary beams. Columns stay; support/joints/finished clear size unassessed. "
-       "opening_hosts:[id],braces:[{storey,from:[i,j],to:[i,j]}],levels:{first_fl:height_or_id,...}, "
+       "opening_hosts:[id] (omit_columns_in_openings:true then leaves out the columns standing in those openings, docs/343),braces:[{storey,from:[i,j],to:[i,j]}],levels:{first_fl:height_or_id,...}, "
        "interior_sills:[{from:[i,j],to:[i,j]}] (interior grid runs; one sill per bay; a first-floor girder on the same "
        "line gives way there), sills_under_braces:true adds sills under first-storey braces on interior lines, "
        "spacing:{joist/rafter:{mode:equal_division|fixed_pitch,divisions:2,pitch:455}},sections:{role:catalog_id}}. "

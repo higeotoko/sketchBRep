@@ -1168,6 +1168,8 @@ struct Plan {
     braces();
   }
   void openingConflicts(const std::set<std::string>& suppressed) {
+    const bool omitColumns = inputs.value("omit_columns_in_openings", false);
+    std::set<std::string> omitted;
     for (auto& piece : pieces) {
       if (piece.role != "column" && piece.role != "through_column" && piece.role != "brace") continue;
       if (suppressed.count(piece.key)) continue;
@@ -1187,6 +1189,14 @@ struct Plan {
         };
         if (!clip(start.Dot(along), delta.Dot(along), -opening.width / 2, opening.width / 2) ||
             !clip(piece.from.Z(), delta.Z(), opening.bottom, opening.top)) continue;
+        // docs/343: asked to (omit_columns_in_openings), a column standing in a door or window is left out, with its
+        // connections, as a designer would (the opening's lintel spans past it); a brace stays flagged.
+        if (omitColumns && (piece.role == "column" || piece.role == "through_column")) {
+          omitted.insert(piece.key);
+          warnings.push_back("開口の中の柱を省きました: " + piece.key + " / " + opening.host + " 開口" + std::to_string(opening.index) +
+                             "。開口の両側の柱・まぐさの支え方は設計で確かめてください。");
+          break;
+        }
         piece.attributes["opening_conflict"] = "design_axis";
         piece.attributes["opening_host"] = opening.host;
         piece.attributes["opening_index"] = std::to_string(opening.index);
@@ -1196,6 +1206,14 @@ struct Plan {
         break;
       }
     }
+    if (!omitted.empty())
+      pieces.erase(std::remove_if(pieces.begin(), pieces.end(),
+                                  [&](const Piece& p) {
+                                    for (const auto& key : omitted)
+                                      if (p.key == key || p.key.rfind(key + "/", 0) == 0) return true;
+                                    return false;
+                                  }),
+                   pieces.end());
   }
 };
 }  // namespace
