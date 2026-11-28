@@ -1486,6 +1486,11 @@ TEST(Drawing, GridSpansKeepClearOfTheOutermostWords) {
   mark.vAlign = 1;
   View view = *plan;
   view.items.push_back(mark);
+  // docs/353: a room's name on the grid line X2.
+  Item room = mark;
+  room.points = {gp_Pnt2d(6000, 2500)};
+  room.text = "LDK";
+  view.items.push_back(room);
   SheetSpec spec;
   spec.scale = 100;
   const auto sheet = layoutSheet(view, spec);
@@ -1505,13 +1510,18 @@ TEST(Drawing, GridSpansKeepClearOfTheOutermostWords) {
   std::vector<Item> gridLines;
   for (const Item& i : sheet->items)
     if (i.kind == Item::Kind::Line && i.pen == Pen::Grid) gridLines.push_back(i);
-  int whole = 0;
+  int whole = 0, named = 0;
   for (const Item& i : sheet->items) {
+    if (i.kind == Item::Kind::Text && i.text == "LDK") {
+      ++named;
+      EXPECT_TRUE(textIsClear(i, gridLines, 100, 0.0));  // docs/353
+    }
     if (i.kind != Item::Kind::Text || i.pen != Pen::Dimension || i.text != "12,000") continue;
     ++whole;
     EXPECT_TRUE(textIsClear(i, gridLines, 100, 0.0));
   }
   EXPECT_EQ(whole, 1);
+  EXPECT_EQ(named, 1);
 }
 
 // docs/352: a member's label (部材記号) is not written over the lines beside it: put where it is clear, or, where the

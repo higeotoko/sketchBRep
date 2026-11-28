@@ -645,11 +645,19 @@ TEST_F(Quantities, BracingPlansNumberTheColumns) {
   const auto sheet = draw::layoutSheet(*view, sheetSpec);
   ASSERT_TRUE(sheet) << sheet.error();
   EXPECT_EQ(crossings(*sheet), 0);
-  draw::View open = *view;
-  open.blanks.clear();
-  const auto unblanked = draw::layoutSheet(open, sheetSpec);
-  ASSERT_TRUE(unblanked);
-  EXPECT_GT(crossings(*unblanked), 0);  // the check itself sees lines through the numbers
+  // The check itself sees a line through a number. (docs/353: the grid lines now stop short of every word, so leaving
+  // the blanks out no longer puts them through the numbers; a line drawn through one stands in for them.)
+  draw::Sheet crossed = *sheet;
+  for (const auto& i : sheet->items)
+    if (i.kind == draw::Item::Kind::Text && !i.text.empty() && std::all_of(i.text.begin(), i.text.end(), ::isdigit) && i.height < 2.0) {
+      const gp_Pnt2d c = i.points.front();
+      draw::Item through;
+      through.kind = draw::Item::Kind::Line;
+      through.points = {gp_Pnt2d(c.X() - 1000, c.Y()), gp_Pnt2d(c.X() + 1000, c.Y())};
+      crossed.items.push_back(through);
+      break;
+    }
+  EXPECT_GT(crossings(crossed), 0);
 }
 
 // docs/340: on a plan, each column the cut passes is a crossed square (管柱; 通し柱 also ringed) and each stud one

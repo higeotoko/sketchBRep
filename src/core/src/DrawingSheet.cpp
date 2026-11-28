@@ -541,12 +541,15 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     }
     if (axes.size() >= 3 && axes.back().first - axes.front().first > 1e-6) put(axes.front().first, axes.back().first, far);
   }
-  // docs/352: the grid lines stop short of the spans' values: with an odd number of bays the middle grid line ran
-  // through the whole length's value ("9,100") over the drawing, on every plan and framing elevation.
+  placeRoomTags(items, view.roomTags, s);
+  // docs/352, docs/353: the grid lines stop short of the words on the drawing (as the section cuts do, docs/250): with
+  // an even number of bays the middle grid line ran through the whole length's value ("9,100"); on plans they ran
+  // through the room names, the opening marks, the 防 of fire doors and the detectors' symbols. The bubbles' own
+  // names are inside their circles, clear of their line.
   {
     std::vector<Item> values;
     for (const Item& i : items)
-      if (i.kind == Item::Kind::Text && i.pen == Pen::Dimension) values.push_back(i);
+      if (i.kind == Item::Kind::Text && i.pen != Pen::GridLabel && !i.text.empty()) values.push_back(i);
     std::vector<const Item*> words;
     for (const Item& i : values) words.push_back(&i);
     std::vector<Item> kept;
@@ -560,7 +563,6 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     }
     items = std::move(kept);
   }
-  placeRoomTags(items, view.roomTags, s);
   // Section cuts (docs/132): a line across the drawing, at each end an arrow the way the section
   // looks, the label and (under it) the sheet it is on.
   for (const View::CutLine& c : view.cuts) {
