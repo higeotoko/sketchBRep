@@ -302,11 +302,22 @@ std::optional<draw::View> foundationDetailView(const Document& document) {
     bottom = base - ft;
     dim(P(-fw / 2, bottom), P(fw / 2, bottom), gp_Vec2d(0, -250));
     dim(P(fw / 2, base), P(fw / 2, bottom), gp_Vec2d(250, 0));
-    note(P(fw / 2 + 80, base - ft / 2), "底盤（鉄筋コンクリート造）");
   }
   dim(P(-sw / 2, top), P(sw / 2, top), gp_Vec2d(0, 250));
+  const double stemDim = sw / 2 + (mat ? 1200 : 700);
   dim(P(sw / 2, top), P(sw / 2, base), gp_Vec2d(mat ? 1200 : 700, 0));
-  note(P(sw / 2 + 80, (top + base) / 2), "立上り（鉄筋コンクリート造）");
+  // docs/356: the parts' names past the dimensions on the right (their values beside their lines), with a leader to
+  // the part: written right beside the concrete, they sat on the footing's "150" and the stem's "600".
+  const double namesAt = stemDim + 250;
+  if (!mat) {
+    const double fw = in.value("footing_width", 450.0), ft = in.value("footing_thickness", 150.0);
+    line(Pen::Text, P(fw / 2 - 60, base - ft / 2), P(namesAt - 20, base - ft / 2));
+    note(P(namesAt, base - ft / 2), "底盤（鉄筋コンクリート造）");
+  }
+  // A quarter down the stem, clear of its height's value (written at the dimension's middle).
+  const double stemAt = top - (top - base) / 4;
+  line(Pen::Text, P(sw / 2 - 40, stemAt), P(namesAt - 20, stemAt));
+  note(P(namesAt, stemAt), "立上り（鉄筋コンクリート造）");
   // Packing and the sill above it.
   if (packing > 0) {
     concrete({P(-sw / 2 + 10, top), P(sw / 2 - 10, top), P(sw / 2 - 10, top + packing), P(-sw / 2 + 10, top + packing)});

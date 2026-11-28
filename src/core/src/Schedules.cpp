@@ -5817,7 +5817,8 @@ draw::View vicinityView(const Document& document, const VicinityMap& map, const 
     draw::Item note;
     note.kind = draw::Item::Kind::Text;
     note.pen = draw::Pen::Text;
-    note.points = {gp_Pnt2d((x0 + x1) / 2, (y0 + y1) / 2 - 8 * scale)};
+    // docs/356: near the frame's foot, away from the site's mark and name at the middle (it sat on "敷地").
+    note.points = {gp_Pnt2d((x0 + x1) / 2, y0 + 10 * scale)};
     note.text = "地図は、画面の「図面一式を書き出す」で国土地理院の地図タイルから入ります";
     note.height = 3.0;
     note.hAlign = 1;

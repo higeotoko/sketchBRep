@@ -187,7 +187,8 @@ void placeRoomTags(std::vector<Item>& items, const std::vector<View::RoomTag>& t
     Item& slot = items[tag.item];
     Item label = std::exchange(slot, Item{});
     if (!textIsClear(label, items, scale, kLabelGap)) {
-      findNearbyPosition(label, scale, 6, [&](const Item& candidate) {
+      // docs/356: as far as 16 steps (the bracing plans' rooms have the side parts' dashed boxes and the walls across).
+      findNearbyPosition(label, scale, 16, [&](const Item& candidate) {
         return textFitsInside(candidate, tag.outline, scale, kLabelGap) &&
                textIsClear(candidate, items, scale, kLabelGap);
       });
@@ -766,12 +767,23 @@ static Result<Sheet> layoutViewOnly(const View& view, const SheetSpec& spec) {
     std::vector<Item> kept;
     kept.reserve(items.size());
     for (Item& item : items) {
-      if (item.kind != Item::Kind::Line || (item.pen != Pen::Grid && item.pen != Pen::Level) || item.points.size() != 2 ||
+      // docs/356: and the leaders (notes' lines): one ran through another member's label on the framing elevations.
+      if (item.kind != Item::Kind::Line || (item.pen != Pen::Grid && item.pen != Pen::Level && item.pen != Pen::Text) ||
+          item.points.size() != 2 ||
           words.empty()) {
         kept.push_back(std::move(item));
         continue;
       }
       const Pen pen = item.pen;
+      if (pen == Pen::Text) {
+        // A leader keeps its own label: the word it ends at (its anchor at the leader's end) is not stopped at.
+        std::vector<const Item*> others;
+        for (const Item* w : words)
+          if (!w->points.front().IsEqual(item.points[0], 1e-6) && !w->points.front().IsEqual(item.points[1], 1e-6))
+            others.push_back(w);
+        for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], others, s, 0.8)) kept.push_back(line(pen, p, q));
+        continue;
+      }
       for (const auto& [p, q] : clearOfText(item.points[0], item.points[1], words, s, 0.8)) kept.push_back(line(pen, p, q));
     }
     items = std::move(kept);
