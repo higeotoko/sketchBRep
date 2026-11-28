@@ -290,11 +290,23 @@ Result<std::string> columnNValues(const doc::Document& d) {
     std::map<std::string, int> counts;
     int evaluatedColumns = 0, notEvaluated = 0;
     for (int f = storeys; f >= 1; --f) {
-      std::set<std::pair<long long, long long>> seen;
-      for (const auto& [p, key] : columns[f]) {
-        if (!seen.insert({std::llround(p.X()), std::llround(p.Y())}).second) continue;
-        json row{{"floor", floorName[f]}, {"at", {p.X(), p.Y()}}, {"column", key}, {"directions", json::object()},
-                 {"reasons", json::array()}};
+      // docs/359: the columns numbered as the bracing plan of the storey numbers them (docs/333: from the top row down,
+      // left to right in each row), so the table and the plan name a column alike (the manual's 10-2).
+      std::vector<std::pair<gp_Pnt2d, std::string>> unique;
+      {
+        std::set<std::pair<long long, long long>> seen;
+        for (const auto& c : columns[f])
+          if (seen.insert({std::llround(c.first.X()), std::llround(c.first.Y())}).second) unique.push_back(c);
+      }
+      std::sort(unique.begin(), unique.end(), [](const auto& l, const auto& r) {
+        const long long ly = std::llround(l.first.Y()), ry = std::llround(r.first.Y());
+        return ly != ry ? ly > ry : l.first.X() < r.first.X();
+      });
+      for (std::size_t index = 0; index < unique.size(); ++index) {
+        const gp_Pnt2d& p = unique[index].first;
+        const std::string& key = unique[index].second;
+        json row{{"floor", floorName[f]}, {"number", index + 1}, {"at", {p.X(), p.Y()}}, {"column", key},
+                 {"directions", json::object()}, {"reasons", json::array()}};
         const bool upper = f == 1 && storeys == 2 && inside(2, p);
         const auto isCorner = corner(f, p);
         const auto upperCorner = upper ? corner(2, p) : std::optional<bool>(false);

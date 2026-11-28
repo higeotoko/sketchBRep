@@ -1263,7 +1263,8 @@ std::vector<PermitCheck> permitBraceChecks(const Document& document) {
         ++shown;
         std::string why;
         for (const auto& r : c.value("reasons", nlohmann::json::array())) why += (why.empty() ? "" : "／") + r.get<std::string>();
-        details += "\n" + c.value("floor", std::string()) + " " + c.value("column", std::string()) + "：" + why;
+        details += "\n" + c.value("floor", std::string()) + " 柱 " +
+                   (c.contains("number") ? std::to_string(c.at("number").get<int>()) : c.value("column", std::string())) + "：" + why;
       }
       for (const auto& why : n.value("reasons", nlohmann::json::array())) details += "\n" + why.get<std::string>();
     }
@@ -5289,7 +5290,7 @@ draw::Table scheduleTable(const Document& document, int which) {
   if (which == 15) {
     // docs/358: 柱頭柱脚金物算定表 (the MLIT manual's N値計算表, 10-1): a row per column and direction.
     t.title = "柱頭柱脚金物算定表";
-    t.headers = {"階", "柱", "位置 (mm)", "出隅", "方向", "壁倍率 左／右", "筋かい 左／右", "補正値", "A1", "B1", "H1/2.7",
+    t.headers = {"階", "柱番号", "位置 (mm)", "出隅", "方向", "壁倍率 左／右", "筋かい 左／右", "補正値", "A1", "B1", "H1/2.7",
                  "A2", "B2", "H2/2.7", "L", "N", "決定 N", "柱頭", "柱脚"};
     const auto made = construction::columnNValues(document);
     if (!made) return t;
@@ -5305,8 +5306,11 @@ draw::Table scheduleTable(const Document& document, int which) {
       for (const auto& r : c.value("reasons", nlohmann::json::array())) why += (why.empty() ? "" : "／") + r.get<std::string>();
       const std::string at = number(c.at("at").at(0).get<double>(), 0) + ", " + number(c.at("at").at(1).get<double>(), 0);
       const std::string corner = c.contains("corner") && c.at("corner").is_boolean() ? (c.at("corner").get<bool>() ? "出隅" : "") : "?";
+      // docs/359: the column by its number on the storey's bracing plan (耐力壁配置図), a through column marked.
+      const std::string columnName = (c.contains("number") ? std::to_string(c.at("number").get<int>()) : std::string("?")) +
+                                     (c.value("column", std::string()).find("通し柱") != std::string::npos ? "（通し柱）" : "");
       for (const auto& [dir, d] : dirs.items())
-        t.rows.push_back({c.value("floor", std::string()), c.value("column", std::string()), at, corner, dir,
+        t.rows.push_back({c.value("floor", std::string()), columnName, at, corner, dir,
                           num(d, "wall_left", 1) + "／" + num(d, "wall_right", 1),
                           d.value("brace_left", std::string()) + "／" + d.value("brace_right", std::string()),
                           num(d, "correction", 1), num(d, "A1", 2), num(d, "B1", 1), num(d, "H1/2.7", 2), num(d, "A2", 2),

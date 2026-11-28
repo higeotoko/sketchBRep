@@ -301,12 +301,41 @@ TEST_F(TimberWorkflow, ColumnNValuesFollowTheManualsFormula) {
       EXPECT_NE(r["details"].get<std::string>().find("(は)"), std::string::npos) << r.dump();
     }
   EXPECT_TRUE(row);
-  // The 柱頭柱脚金物算定表: a row per column and direction, in the drawing set after 存在壁量の算定.
+  // docs/359: the columns carry the numbers the storey's bracing plan gives them.
   ASSERT_TRUE(m.setWallCalculation(in.dump()));
+  {
+    double zMid = 0;
+    for (const auto& o : m.document().objects())
+      if (o.layer == "2階軸組" && o.attributes.count("kind") && o.attributes.at("kind") == "brace") {  // the 2nd storey's height (its columns here are through columns)
+        const Bnd_Box b = m.document().worldBounds(o);
+        double x0, y0, z0, x1, y1, z1;
+        b.Get(x0, y0, z0, x1, y1, z1);
+        zMid = (z0 + z1) / 2;
+        break;
+      }
+    ASSERT_GT(zMid, 0);
+    draw::ViewSpec bracing = draw::planView(zMid);
+    bracing.bracingFloor = "2";
+    const auto plan = draw::makeView(m.document(), bracing);
+    ASSERT_TRUE(plan) << plan.error();
+    const json numbered = json::parse(*construction::columnNValues(m.document()));
+    int compared = 0;
+    for (const auto& c : numbered["columns"]) {
+      if (c["floor"] != "2階") continue;
+      for (const auto& i : plan->items)
+        if (i.kind == draw::Item::Kind::Text && i.height < 2.0 && std::abs(i.points.front().X() - c["at"][0].get<double>()) < 1 &&
+            std::abs(i.points.front().Y() - c["at"][1].get<double>()) < 1) {
+          EXPECT_EQ(i.text, std::to_string(c["number"].get<int>()));
+          ++compared;
+        }
+    }
+    EXPECT_EQ(compared, 2);  // the two columns at the brace
+  }
+  // The 柱頭柱脚金物算定表: a row per column and direction, in the drawing set after 存在壁量の算定.
   const draw::Table table = doc::scheduleTable(m.document(), 15);
   EXPECT_EQ(table.title, "柱頭柱脚金物算定表");
   bool cornerRow = false;
-  for (const auto& r : table.rows) cornerRow = cornerRow || (r[0] == "2階" && r[2] == "0, 0" && r[17] == "(は)");
+  for (const auto& r : table.rows) cornerRow = cornerRow || (r[0] == "2階" && r[2] == "0, 0" && r[17] == "(は)" && !r[1].empty() && r[1][0] != '?');
   EXPECT_TRUE(cornerRow);
   const auto set = doc::drawingSet(m.document(), {});
   ASSERT_TRUE(set) << set.error();
